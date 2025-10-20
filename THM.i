@@ -1,5 +1,5 @@
-pp_ini_bc = 3e+7 # Pa initial value of pore pressure
-T_ini_bc = 399.15 # K  initial value of temperature
+pp_ini_bc = 30e6 # Pa initial value of pore pressure
+T_ini_bc = 373.15 # K  initial value of temperature
 sigmaV_ini_bc = 67.3e6 # Pa vertical
 sigmaH_ini_bc = 42.9e6 # Pa horizontal
 nu = 0.225
@@ -24,25 +24,25 @@ nu = 0.225
 [Functions]
   [ramp_all]
     type = PiecewiseLinear
-    x = '0   1000  2000'
-    y = '0     0.5     1'
+    x = '0   1000  5000'
+    y = '0     1e-3     1'
   []
   [ramp]
     type = PiecewiseLinear
-    x = '0   3000  3500'
+    x = '0   5000  10000'
     y = '0     0.5     1'
   []
   [inj_flux]
     type = ParsedFunction
     symbol_names = 'A R'
     symbol_values = 'A_inj ramp_all'
-    expression = '-3.0 / A * R' # kg/m^2/s
+    expression = '-3 / A * R' # kg/m^2/s
   []
   [prod_flux]
     type = ParsedFunction
     symbol_names = 'A R'
     symbol_values = 'A_prod ramp_all'
-    expression = ' 3.0 / A * R' # kg/m^2/s
+    expression = '3 / A * R' # kg/m^2/s
   []
   [sigmaV_flux]
     type = ParsedFunction
@@ -50,8 +50,6 @@ nu = 0.225
     symbol_values = 'ramp_all'
     expression = 'R * ${sigmaV_ini_bc}' # 最终值 = 67.3e6 Pa
   []
-
-  # 柔性加载 - 水平应力
   [sigmaH_flux]
     type = ParsedFunction
     symbol_names = 'R'
@@ -78,12 +76,17 @@ nu = 0.225
   gravity = '0 -9.8 0'
   porepressure = porepressure
   temperature = temperature
-  fp = FluidProperties
+  fp = water
+  mass_fraction_vars = tracer_concentration
   use_displaced_mesh = False
-  biot_coefficient = 1
-  multiply_by_density = true
-  eigenstrain_names = 'thermal_contribution ini_strain'
+  biot_coefficient = 0.9
+  eigenstrain_names = 'thermal_contribution'
   block = 'cap1 cap2 block'
+  # relative_permeability_exponent = 3
+  # relative_permeability_type = Corey
+  # residual_saturation = 0.1
+  # van_genuchten_alpha = 1E-6
+  # van_genuchten_m = 0.6
 []
 
 [Variables]
@@ -99,19 +102,52 @@ nu = 0.225
   [disp_y]
     initial_condition = 0
   []
+  [tracer_concentration]
+  []
 []
 
 [AuxVariables]
-  [stress_xx]
-    order = CONSTANT
-    family = MONOMIAL
-    initial_condition = -${sigmaH_ini_bc}
+  [enthalpy]
   []
-  [stress_yy]
-    order = CONSTANT
-    family = MONOMIAL
-    initial_condition = -${sigmaV_ini_bc}
+  [internal_energy]
   []
+  [density]
+  []
+[]
+
+[ICs]
+  [tracer_concentration]
+    type = FunctionIC
+    function = '0.5*if((x)*(x) + (y+50)*(y+50) < 0.1*0.1 , 1, 0 )'
+    variable = tracer_concentration
+  []
+  [enthalpy]
+    type = PorousFlowFluidPropertyIC
+    variable = enthalpy
+    property = enthalpy
+    porepressure = porepressure
+    temperature = temperature
+    fp = water
+  []
+  [internal_energy]
+    type = PorousFlowFluidPropertyIC
+    variable = internal_energy
+    property = internal_energy
+    porepressure = porepressure
+    temperature = temperature
+    fp = water
+  []
+  [density]
+    type = PorousFlowFluidPropertyIC
+    variable = density
+    property = density
+    porepressure = porepressure
+    temperature = temperature
+    fp = water
+  []
+[]
+
+[AuxVariables]
   [density]
     order = CONSTANT
     family = MONOMIAL
@@ -161,8 +197,14 @@ nu = 0.225
   []
 []
 
+# [FluidProperties]
+#   [water]
+#     type = Water97FluidProperties
+#   []
+# []
+
 [FluidProperties]
-  [FluidProperties]
+  [water]
     type = SimpleFluidProperties
     bulk_modulus = 2.27e9
     density0 = 970.0
@@ -171,24 +213,6 @@ nu = 0.225
     cp = 4149.0
     porepressure_coefficient = 1
     thermal_expansion = 0.000214
-  []
-[]
-
-[Physics]
-  [SolidMechanics]
-    [QuasiStatic]
-      [all]
-        strain = SMALL
-        incremental = false
-        add_variables = true
-        generate_output = 'vonmises_stress'
-        material_output_family = 'MONOMIAL'
-        material_output_order = 'FIRST'
-        block = 'cap1 cap2 block'
-        planar_formulation = 'PLANE_STRAIN'
-        eigenstrain_names = 'ini_strain thermal_contribution'
-      []
-    []
   []
 []
 
@@ -203,10 +227,15 @@ nu = 0.225
     thermal_expansion_coeff = 1.0e-5
     solid_bulk = 1
   []
+  [./strain]
+    type = ComputeSmallStrain
+    block = 'cap1 cap2 block'
+    eigenstrain_names = 'thermal_contribution'
+  [../]
   [k_cap1]
     type = PorousFlowPermeabilityConst
     block = cap1
-    permeability = '1e-18 0 0   0 1e-18 0   0 0 1e-18'
+    permeability = '1e-15 0 0   0 1e-15 0   0 0 1e-15'
   []
   [phi_blk]
     type = PorousFlowPorosity
@@ -241,18 +270,12 @@ nu = 0.225
   [k_cap2]
     type = PorousFlowPermeabilityConst
     block = cap2
-    permeability = '1e-18 0 0   0 1e-18 0   0 0 1e-18'
+    permeability = '1e-15 0 0   0 1e-15 0   0 0 1e-15'
   []
   [elasticity_tensor]
     type = ComputeIsotropicElasticityTensor
     shear_modulus = 8.38e9
     poissons_ratio = 0.225
-    block = 'cap1 cap2 block'
-  []
-  [ini_strain]
-    type = ComputeEigenstrainFromInitialStress
-    initial_stress = '-${sigmaH_ini_bc} 0 0   0 -${sigmaV_ini_bc} 0   0 0 sigma_zz'
-    eigenstrain_name = ini_strain
     block = 'cap1 cap2 block'
   []
   [thermal_contribution]
@@ -285,6 +308,49 @@ nu = 0.225
     prop_values = '2600' # kg/m^3
     block = 'cap1 block cap2'
   []
+#   [phi_f1]
+#     type = PorousFlowPorosity
+#     block = f1
+#     porosity_zero = 0.25
+#     mechanical = true
+#     fluid = true
+#     thermal = true
+#     thermal_expansion_coeff = 1.2e-5
+#     solid_bulk = 0.8
+#   []
+#   [k_f1]
+#     type = PorousFlowPermeabilityConst
+#     block = f1
+#     permeability = '1e-11 0 0   0 1e-11 0   0 0 1e-11'
+#   []
+#   [elasticity_tensor_f1]
+#     type = ComputeIsotropicElasticityTensor
+#     shear_modulus = 2e9
+#     poissons_ratio = 0.30
+#     block = f1
+#   []
+
+#   [phi_f2]
+#     type = PorousFlowPorosity
+#     block = f2
+#     porosity_zero = 0.25
+#     mechanical = true
+#     fluid = true
+#     thermal = true
+#     thermal_expansion_coeff = 1.2e-5
+#     solid_bulk = 0.8
+#   []
+#   [k_f2]
+#     type = PorousFlowPermeabilityConst
+#     block = f2
+#     permeability = '1e-11 0 0   0 1e-11 0   0 0 1e-11'   # 高渗透断层
+#   []
+#   [elasticity_tensor_f2]
+#     type = ComputeIsotropicElasticityTensor
+#     shear_modulus = 2e9
+#     poissons_ratio = 0.30
+#     block = f2
+#   []
 []
 
 [BCs]
@@ -294,22 +360,14 @@ nu = 0.225
     variable = porepressure
     flux_function = inj_flux
     fluid_phase = 0
-    use_mobility = false
-    use_relperm = false
   []
-  [q_in]
-    type = PorousFlowSink
-    boundary = injection
+  [left_T]
+    type = PorousFlowEnthalpySink
     variable = temperature
+    boundary = injection
+    T_in = 300
+    fp = wa
     flux_function = inj_flux
-    fluid_phase = 0
-    use_enthalpy = true
-  []
-  [T_inlet]
-    type = DirichletBC
-    boundary = injection
-    variable = temperature
-    value = 300
   []
   [m_out]
     type = PorousFlowSink
@@ -317,66 +375,91 @@ nu = 0.225
     variable = porepressure
     flux_function = prod_flux
     fluid_phase = 0
-    use_mobility = false
-    use_relperm = false
+    use_mobility = true
+    use_relperm = true
+    use_enthalpy = true
   []
-  [q_out]
+  [m_out_heat]
     type = PorousFlowSink
     boundary = production
     variable = temperature
-    fluid_phase = 0
     flux_function = prod_flux
+    fluid_phase = 0
+    use_mobility = true
+    use_relperm = true
     use_enthalpy = true
   []
-
-  # Displacement and stress ----------------------------------------
   [roller_bottom_x]
     type = DirichletBC
     variable = disp_x
-    boundary = 'tr tl bl br'
+    boundary = 'b'
     value = 0
   []
   [roller_bottom]
     type = DirichletBC
     variable = disp_y
-    boundary = 'tr tl bl br'
+    boundary = 'b'
     value = 0
   []
-  # [injection_dispx]
-  #   type = DirichletBC
-  #   variable = disp_x
-  #   boundary = 'injection'
-  #   value = 0
-  # []
-  # [injection_dispy]
-  #   type = DirichletBC
-  #   variable = disp_y
-  #   boundary = 'injection'
-  #   value = 0
-  # []
-  # [production_dispy]
-  #   type = DirichletBC
-  #   variable = disp_y
-  #   boundary = 'production'
-  #   value = 0
-  # []
-  # [production_dispx]
-  #   type = DirichletBC
-  #   variable = disp_x
-  #   boundary = 'production'
-  #   value = 0
-  # []
+  [injection_dispx]
+    type = DirichletBC
+    variable = disp_x
+    boundary = 'injection'
+    value = 0
+  []
+  [injection_dispy]
+    type = DirichletBC
+    variable = disp_y
+    boundary = 'injection'
+    value = 0
+  []
+  [production_dispy]
+    type = DirichletBC
+    variable = disp_y
+    boundary = 'production'
+    value = 0
+  []
+  [production_dispx]
+    type = DirichletBC
+    variable = disp_x
+    boundary = 'production'
+    value = 0
+  []
   [traction_top_bottom]
     type = Pressure
     variable = disp_y
-    boundary = 't b'
+    boundary = 't'
     factor = ${sigmaV_ini_bc}
   []
-  [traction_right_left]
+  [traction_left]
     type = Pressure
     variable = disp_x
-    boundary = 'l r'
+    boundary = 'l'
     factor = ${sigmaH_ini_bc}
+  []
+  [traction_right]
+    type = Pressure
+    variable = disp_x
+    boundary = 'r'
+    factor = ${sigmaH_ini_bc}
+  []
+  # [Porepressure_BC]
+  #   type = DirichletBC
+  #   variable = porepressure
+  #   boundary = 't b l r'
+  #   value = ${pp_ini_bc}
+  # []
+  # [T_BC]
+  #   type = DirichletBC
+  #   variable = temperature
+  #   boundary = 't b l r'
+  #   value = ${T_ini_bc}
+  # []
+  [injected_tracer]
+    type = DirichletBC
+    variable = tracer_concentration
+    value = 0.5
+    boundary = injection
   []
 []
 
@@ -394,17 +477,17 @@ nu = 0.225
   solve_type = NEWTON
   line_search = 'none'
   automatic_scaling = true
-  nl_abs_tol = 1e-4
-  nl_rel_tol = 1e-4
-  l_tol = 1e-4
+  nl_abs_tol = 1e-5
+  nl_rel_tol = 1e-5
+  l_tol = 1e-6
   l_max_its = 1000
-  dt = 10
+  dt = 1
   [TimeStepper]
     type = IterationAdaptiveDT
-    growth_factor = 1.2
+    growth_factor = 1.3
     optimal_iterations = 12
-    cutback_factor = 0.4
-    dt = 10
+    cutback_factor = 0.5
+    dt = 1
   []
   end_time = 1e8
 []
@@ -428,12 +511,12 @@ nu = 0.225
 
 [Outputs]
   exodus = true
-  [CSV]
-    type = CSV
-    execute_on = FINAL
-  []
+  # [CSV]
+  #   type = CSV
+  #   execute_on = FINAL
+  # []
 []
 
-# Do not use 'IsotropicPlasticityStressUpdate' cause the yield surface used is the Von Mises yield surface..Using 'ComputeMultiPlasticityStress'.
-
-# Mohr-Coulomb: 'materials/CappedMohrCoulombStressUpdate' or 'userobjects/SolidMechanicsPlasticMohrCoulomb'
+# [Debug]
+#   show_actions = true
+# []
