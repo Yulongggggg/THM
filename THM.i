@@ -1,48 +1,45 @@
-pp_ini_bc = 30e6 # Pa initial value of pore pressure
+pp_ini_bc = 20e6 # Pa initial value of pore pressure
 T_ini_bc = 373.15 # K  initial value of temperature
 sigmaV_ini_bc = 67.3e6 # Pa vertical
 sigmaH_ini_bc = 42.9e6 # Pa horizontal
 nu = 0.225
 
-[Mesh]
-  file = fractures.msh
-[]
+a_frac   = 6e-4    # [m]  fracture aperture (开度)
+phi_f    = 1.0     # [-]  intrinsic fracture porosity (常取 ~1)
+k_f      = 3e-8    # [m^2] intrinsic fracture permeability (面内)
 
-[Postprocessors]
-  [A_inj]
-    type = AreaPostprocessor
-    boundary = injection
-    execute_on = initial
-  []
-  [A_prod]
-    type = AreaPostprocessor
-    boundary = production
-    execute_on = initial
-  []
+[Mesh]
+  # file = fractures_copy.msh
+  file = FN.msh
 []
 
 [Functions]
+  [ramp_injection]
+    type = PiecewiseLinear
+    x = '0   500  1000'
+    y = '0     3e-1     1'
+  []
+  [ramp_production]
+    type = PiecewiseLinear
+    x = '1000  2000'
+    y = '0     1'
+  []
   [ramp_all]
     type = PiecewiseLinear
-    x = '0   1000  5000'
-    y = '0     1e-3     1'
-  []
-  [ramp]
-    type = PiecewiseLinear
-    x = '0   5000  10000'
+    x = '0   50  100'
     y = '0     0.5     1'
   []
   [inj_flux]
     type = ParsedFunction
     symbol_names = 'A R'
-    symbol_values = 'A_inj ramp_all'
-    expression = '-3 / A * R' # kg/m^2/s
+    symbol_values = 'A_prod ramp_injection'
+    expression = '-0.2 /A * R' # kg/m^2/s
   []
   [prod_flux]
     type = ParsedFunction
     symbol_names = 'A R'
-    symbol_values = 'A_prod ramp_all'
-    expression = '3 / A * R' # kg/m^2/s
+    symbol_values = 'A_prod ramp_production'
+    expression = '0.2 / A * R' # kg/m^2/s
   []
   [sigmaV_flux]
     type = ParsedFunction
@@ -62,6 +59,18 @@ nu = 0.225
     symbol_values = '${sigmaH_ini_bc} ${sigmaV_ini_bc} ${nu}' # 0.225 是你的泊松比
     expression = '-1*nu * (sxx + syy)'
   []
+  [frac_phi_eff]
+    type = ParsedFunction
+    symbol_names  = 'a phi'
+    symbol_values = '${a_frac} ${phi_f}'
+    expression    = 'a * phi'          # = a * phi_f
+  []
+  [frac_k_eff]
+    type = ParsedFunction
+    symbol_names  = 'a k'
+    symbol_values = '${a_frac} ${k_f}'
+    expression    = 'a * k'            # = a * k_f
+  []
 []
 
 [GlobalParams]
@@ -73,6 +82,7 @@ nu = 0.225
   fluid_properties_type = PorousFlowSingleComponentFluid
   add_darcy_aux = true
   coupling_type = ThermoHydroMechanical
+  # coupling_type = ThermoHydro
   gravity = '0 -9.8 0'
   porepressure = porepressure
   temperature = temperature
@@ -89,12 +99,15 @@ nu = 0.225
   # van_genuchten_m = 0.6
 []
 
+
 [Variables]
   [porepressure]
     initial_condition = ${pp_ini_bc}
+    # scaling = 1E-8
   []
   [temperature]
     initial_condition = ${T_ini_bc}
+    # scaling = 1E-6
   []
   [disp_x]
     initial_condition = 0
@@ -106,12 +119,109 @@ nu = 0.225
   []
 []
 
+[Kernels]
+  # -----------------------
+  # 裂隙：流体（组件0 = 压力方程）
+  # -----------------------
+  [pp_mass_fracs]
+    type = PorousFlowMassTimeDerivative
+    variable = porepressure          # 变量=pp
+    fluid_component = 0
+    block = fractures
+  []
+  [pp_adv_fracs]
+    # 全上风：等价 Action 的“full upwinding”分支
+    type = PorousFlowFullySaturatedAdvectiveFlux
+    variable = porepressure
+    fluid_component = 0
+    multiply_by_density = true       # 与文档一致，别关
+    block = fractures
+    gravity = '0 -9.8 0'
+  []
+  [pp_disp_fracs]
+    # 若不要弥散/扩散，可注释掉这一条
+    type = PorousFlowDispersiveFlux
+    variable = porepressure
+    fluid_component = 0
+    disp_trans = 0
+    disp_long  = 0
+    block = fractures
+    gravity = '0 -9.8 0'
+  []
+  # -----------------------
+  # 裂隙：示踪（组件1 = massfrac0）
+  # -----------------------
+  [tr_mass_fracs]
+    type = PorousFlowMassTimeDerivative
+    variable = tracer_concentration
+    fluid_component = 1
+    gravity = '0 -9.8 0'
+    block = fractures
+  []
+  [tr_adv_fracs]
+    type = PorousFlowFullySaturatedAdvectiveFlux
+    variable = tracer_concentration
+    fluid_component = 1
+    multiply_by_density = true
+    gravity = '0 -9.8 0'
+    block = fractures
+  []
+  [tr_disp_fracs]
+    type = PorousFlowDispersiveFlux
+    variable = tracer_concentration
+    fluid_component = 1
+    gravity = '0 -9.8 0'
+    disp_trans = 0
+    disp_long  = 0
+    block = fractures
+  []
+  # -----------------------
+  # （可选）裂隙：热方程
+  # 只在你要让裂隙也解温度时启用；否则整段注释掉
+  # -----------------------
+  [T_mass_fracs]
+    type = PorousFlowEnergyTimeDerivative
+    gravity = '0 -9.8 0'
+    variable = temperature
+    block = fractures
+  []
+  [T_cond_fracs]
+    type = PorousFlowHeatConduction
+    gravity = '0 -9.8 0'
+    variable = temperature
+    block = fractures
+  []
+  [T_adv_fracs]
+    type = PorousFlowFullySaturatedHeatAdvection
+    gravity = '0 -9.8 0'
+    variable = temperature
+    multiply_by_density = true       # 文档规定：必须乘ρ
+    block = fractures
+  []
+[]
+
 [AuxVariables]
+  [viscosity]
+    order = CONSTANT
+    family = MONOMIAL
+  []
+  [porosity]
+    family = MONOMIAL
+    order = CONSTANT
+  []
   [enthalpy]
+    family = MONOMIAL
+    order  = CONSTANT
   []
   [internal_energy]
+    family = MONOMIAL
+    order  = CONSTANT
   []
   [density]
+    family = MONOMIAL
+    order  = CONSTANT
+  []
+  [heat_outflow]
   []
 []
 
@@ -147,36 +257,8 @@ nu = 0.225
   []
 []
 
-[AuxVariables]
-  [density]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [viscosity]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [porosity]
-    family = MONOMIAL
-    order = CONSTANT
-  []
-[]
 
 [AuxKernels]
-  [stress_xx]
-    type = RankTwoAux
-    rank_two_tensor = stress
-    variable = stress_xx
-    index_i = 0
-    index_j = 0
-  []
-  [stress_yy]
-    type = RankTwoAux
-    rank_two_tensor = stress
-    variable = stress_yy
-    index_i = 1
-    index_j = 1
-  []
   [density]
     type = MaterialRealAux
     variable = density
@@ -197,13 +279,10 @@ nu = 0.225
   []
 []
 
-# [FluidProperties]
-#   [water]
-#     type = Water97FluidProperties
-#   []
-# []
-
 [FluidProperties]
+  # [water]
+  #   type = Water97FluidProperties
+  # []
   [water]
     type = SimpleFluidProperties
     bulk_modulus = 2.27e9
@@ -221,7 +300,7 @@ nu = 0.225
     type = PorousFlowPorosity
     block = cap1
     porosity_zero = 0.01
-    mechanical = true
+    # mechanical = true  may not converge, be careful before using it
     fluid = true
     thermal = true
     thermal_expansion_coeff = 1.0e-5
@@ -241,7 +320,7 @@ nu = 0.225
     type = PorousFlowPorosity
     block = block
     porosity_zero = 0.15
-    mechanical = true
+    # mechanical = true
     fluid = true
     thermal = true
     thermal_expansion_coeff = 1.0e-5
@@ -261,7 +340,7 @@ nu = 0.225
     type = PorousFlowPorosity
     block = cap2
     porosity_zero = 0.01
-    mechanical = true
+    # mechanical = true
     fluid = true
     thermal = true
     thermal_expansion_coeff = 1.0e-5
@@ -308,50 +387,89 @@ nu = 0.225
     prop_values = '2600' # kg/m^3
     block = 'cap1 block cap2'
   []
-#   [phi_f1]
-#     type = PorousFlowPorosity
-#     block = f1
-#     porosity_zero = 0.25
-#     mechanical = true
-#     fluid = true
-#     thermal = true
-#     thermal_expansion_coeff = 1.2e-5
-#     solid_bulk = 0.8
-#   []
-#   [k_f1]
-#     type = PorousFlowPermeabilityConst
-#     block = f1
-#     permeability = '1e-11 0 0   0 1e-11 0   0 0 1e-11'
-#   []
-#   [elasticity_tensor_f1]
-#     type = ComputeIsotropicElasticityTensor
-#     shear_modulus = 2e9
-#     poissons_ratio = 0.30
-#     block = f1
-#   []
+  # ===== NEW: 裂隙块（fractures）的等效性质：phi_eff = a*phi_f, k_eff = a*k_f =====
 
-#   [phi_f2]
-#     type = PorousFlowPorosity
-#     block = f2
-#     porosity_zero = 0.25
-#     mechanical = true
-#     fluid = true
-#     thermal = true
-#     thermal_expansion_coeff = 1.2e-5
-#     solid_bulk = 0.8
-#   []
-#   [k_f2]
-#     type = PorousFlowPermeabilityConst
-#     block = f2
-#     permeability = '1e-11 0 0   0 1e-11 0   0 0 1e-11'   # 高渗透断层
-#   []
-#   [elasticity_tensor_f2]
-#     type = ComputeIsotropicElasticityTensor
-#     shear_modulus = 2e9
-#     poissons_ratio = 0.30
-#     block = f2
-#   []
+  [pf_temp_fracs]
+    type = PorousFlowTemperature
+    block = fractures
+  []
+  [pf_state_fracs]
+    type = PorousFlow1PhaseFullySaturated
+    porepressure = porepressure
+    block = fractures
+  []
+  [pf_massfrac_fracs]
+    type = PorousFlowMassFraction
+    mass_fraction_vars = tracer_concentration
+    block = fractures
+  []
+  [pf_fluid_fracs]
+    type = PorousFlowSingleComponentFluid
+    fp = water
+    phase = 0
+    block = fractures
+  []
+  [nearestqp_fracs]
+    type = PorousFlowNearestQp
+    block = fractures
+  []
+
+
+  [phi_fractures]
+    type = PorousFlowPorosityConst
+    block = fractures
+    porosity = 6e-4              # <- 与 frac_phi_eff 对应（默认 a=6e-4, phi_f=1）
+  []
+  [k_fractures]
+    type = PorousFlowPermeabilityConst
+    block = fractures
+    permeability = '1.8e-11 0 0   0 1.8e-11 0   0 0 1.8e-11'   # <- 与 frac_k_eff 对应（a*k_f）
+  []
+  [kth_fracs]
+    type = PorousFlowThermalConductivityIdeal
+    PorousFlowDictator = dictator
+    dry_thermal_conductivity = '0 0 0   0 0 0   0 0 0'
+    block = fractures
+  []
+  [diff_fractures]
+    type = PorousFlowDiffusivityConst
+    block = fractures
+    diffusion_coeff = '1e-9 1e-9'
+    tortuosity = 1.0
+  []
+  [diff_matrix]
+    type = PorousFlowDiffusivityConst
+    block = 'cap1 cap2 block'
+    diffusion_coeff = '1e-9 1e-9'
+    tortuosity = 0.2
+  []
 []
+
+
+[Postprocessors]
+  [A_inj]
+    type = AreaPostprocessor
+    boundary = injection
+    execute_on = initial
+  []
+  [A_prod]
+    type = AreaPostprocessor
+    boundary = production
+    execute_on = initial
+  []
+  [inj_flux]
+    type = FunctionValuePostprocessor
+    function = inj_flux
+    execute_on = 'initial timestep_begin'
+  []
+  [power_prod]
+    type      = SideIntegralVariablePostprocessor
+    boundary  = production
+    variable  = heat_outflow          # W/m²
+    execute_on = 'TIMESTEP_END'
+  []
+[]
+
 
 [BCs]
   [m_in]
@@ -361,13 +479,14 @@ nu = 0.225
     flux_function = inj_flux
     fluid_phase = 0
   []
-  [left_T]
+  [in_T]
     type = PorousFlowEnthalpySink
     variable = temperature
     boundary = injection
     T_in = 300
-    fp = wa
+    fp = water
     flux_function = inj_flux
+    porepressure_var = porepressure
   []
   [m_out]
     type = PorousFlowSink
@@ -375,9 +494,8 @@ nu = 0.225
     variable = porepressure
     flux_function = prod_flux
     fluid_phase = 0
-    use_mobility = true
-    use_relperm = true
-    use_enthalpy = true
+    use_mobility = False
+    use_relperm = False
   []
   [m_out_heat]
     type = PorousFlowSink
@@ -385,9 +503,8 @@ nu = 0.225
     variable = temperature
     flux_function = prod_flux
     fluid_phase = 0
-    use_mobility = true
-    use_relperm = true
     use_enthalpy = true
+    save_in = heat_outflow
   []
   [roller_bottom_x]
     type = DirichletBC
@@ -443,18 +560,27 @@ nu = 0.225
     boundary = 'r'
     factor = ${sigmaH_ini_bc}
   []
-  # [Porepressure_BC]
-  #   type = DirichletBC
+  # [outflow]
+  #   type = PorousFlowOutflowBC
+  #   PorousFlowDictator = dictator
+  #   gravity = '0 -9.8 0'
+  #   boundary = 'l r b t'
+  #   flux_type = fluid
   #   variable = porepressure
-  #   boundary = 't b l r'
-  #   value = ${pp_ini_bc}
+  #   include_relperm = False
   # []
-  # [T_BC]
-  #   type = DirichletBC
-  #   variable = temperature
-  #   boundary = 't b l r'
-  #   value = ${T_ini_bc}
-  # []
+  [T_BC]
+    type = DirichletBC
+    variable = temperature
+    boundary = 'l r t b'
+    value = ${T_ini_bc}
+  []
+  [pp_BC]
+    type = DirichletBC
+    variable = porepressure
+    boundary = 'l r t b'
+    value = ${pp_ini_bc}
+  []
   [injected_tracer]
     type = DirichletBC
     variable = tracer_concentration
@@ -481,15 +607,15 @@ nu = 0.225
   nl_rel_tol = 1e-5
   l_tol = 1e-6
   l_max_its = 1000
-  dt = 1
+  dt = 20
   [TimeStepper]
     type = IterationAdaptiveDT
-    growth_factor = 1.3
+    growth_factor = 1.5
     optimal_iterations = 12
-    cutback_factor = 0.5
-    dt = 1
+    cutback_factor = 0.7
+    dt = 20
   []
-  end_time = 1e8
+  end_time = 1e9 # near 32 years
 []
 
 [VectorPostprocessors]
@@ -497,6 +623,7 @@ nu = 0.225
     type = PositionsFunctorValueSampler
     discontinuous = False
     functors = 'disp_x disp_y porepressure temperature'
+    # functors = 'porepressure temperature'
     positions = 'all_elements'
     sort_by = 'x'
     execute_on = TIMESTEP_END
